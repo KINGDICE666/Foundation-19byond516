@@ -158,6 +158,25 @@ SUBSYSTEM_DEF(scpnet)
 			return TRUE
 	return FALSE
 
+/datum/controller/subsystem/scpnet/proc/resolve(address)
+	if(!istext(address))
+		return
+	var/domain = lowertext(trim(address))
+	var/slug = "index"
+	var/divider = findtext(domain, "/")
+	if(divider)
+		slug = copytext(domain, divider + 1)
+		domain = copytext(domain, 1, divider)
+	if(!length(domain) || !length(slug))
+		return
+	for(var/site_id in sites)
+		var/list/site = sites[site_id]
+		if(site["domain"] != domain)
+			continue
+		if(!has_page(site_id, slug))
+			return
+		return list(site_id, slug)
+
 /datum/controller/subsystem/scpnet/proc/request_page(site_id, slug)
 	if(!is_enabled() || !has_page(site_id, slug))
 		return

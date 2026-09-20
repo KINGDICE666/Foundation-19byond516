@@ -1,7 +1,56 @@
 import { Component } from 'inferno';
-import { useBackend, useLocalState } from '../backend';
-import { Box, Button, Icon, Input, NoticeBox, Section, Stack } from '../components';
+import { useBackend } from '../backend';
+import { Box, Icon } from '../components';
 import { NtosWindow } from '../layouts';
+
+type Palette = {
+  accent: string;
+  chrome: string;
+  deep: string;
+  line: string;
+  text: string;
+  muted: string;
+  disabled: string;
+  surface: string;
+  canvas: string;
+  secure: string;
+  danger: string;
+  notice: string;
+  noticeText: string;
+};
+
+const PALETTES: Record<string, Palette> = {
+  dark: {
+    accent: '#4a9eff',
+    chrome: '#1b1e24',
+    deep: '#101217',
+    line: '#33394a',
+    text: '#e6e9ef',
+    muted: '#8b93a3',
+    disabled: '#4d5361',
+    surface: '#1c1f26',
+    canvas: '#15171c',
+    secure: '#57c785',
+    danger: '#ff8080',
+    notice: '#3a2f1c',
+    noticeText: '#f0c674',
+  },
+  light: {
+    accent: '#1a73e8',
+    chrome: '#dfe3ea',
+    deep: '#c3cad4',
+    line: '#aab3c0',
+    text: '#1f2328',
+    muted: '#5f6672',
+    disabled: '#a7aebb',
+    surface: '#ffffff',
+    canvas: '#f2f3f5',
+    secure: '#1e8e3e',
+    danger: '#c5221f',
+    notice: '#fdf3d8',
+    noticeText: '#7a5b12',
+  },
+};
 
 const FRAME_ADDRESS =
   /^https:\/\/[a-z0-9.-]{4,64}\/i\/[a-f0-9]{32}\/[a-z0-9][a-z0-9-]{0,62}$/;
@@ -122,13 +171,25 @@ type Found = {
   snippet: string;
 };
 
+type Tab = {
+  id: number;
+  title: string;
+  active: boolean;
+};
+
 type Data = {
+  tabs: Tab[];
+  can_open_tab: boolean;
   available: boolean;
   loading: boolean;
   catalog: Site[];
   site: Site | null;
   page: Page | null;
-  slug: string | null;
+  view: string;
+  address: string;
+  has_back: boolean;
+  has_forward: boolean;
+  theme: string;
   search: {
     query: string | null;
     results: Found[];
@@ -143,9 +204,597 @@ type Data = {
   };
 };
 
+const palette = (data: Data) => PALETTES[data.theme] || PALETTES.dark;
+
+type FieldProps = {
+  value: string;
+  placeholder: string;
+  height: string;
+  fontSize: string;
+  color: string;
+  onEnter: (value: string) => void;
+};
+
+class Field extends Component<FieldProps> {
+  private input: HTMLInputElement | null = null;
+
+  componentDidMount() {
+    if (this.input) {
+      this.input.value = this.props.value;
+    }
+  }
+
+  componentDidUpdate(prevProps: FieldProps) {
+    if (
+      this.input &&
+      prevProps.value !== this.props.value &&
+      document.activeElement !== this.input
+    ) {
+      this.input.value = this.props.value;
+    }
+  }
+
+  render() {
+    const { placeholder, height, fontSize, color, onEnter } = this.props;
+    return (
+      <input
+        ref={(node: any) => {
+          this.input = node;
+        }}
+        placeholder={placeholder}
+        maxLength={120}
+        onKeyDown={(event: any) => {
+          if (event.keyCode === 13) {
+            onEnter(event.target.value);
+            event.target.blur();
+          }
+        }}
+        style={{
+          flex: '1',
+          'min-width': '0',
+          width: 'auto',
+          height: height,
+          background: 'transparent',
+          border: '0',
+          outline: 'none',
+          padding: '0',
+          color: color,
+          'font-family': 'inherit',
+          'font-size': fontSize,
+        }}
+      />
+    );
+  }
+}
+
+const ToolButton = (props) => {
+  const { icon, disabled, t, onClick } = props;
+  return (
+    <Box
+      onClick={() => !disabled && onClick()}
+      style={{
+        display: 'flex',
+        'align-items': 'center',
+        'justify-content': 'center',
+        'flex-shrink': '0',
+        width: '26px',
+        height: '26px',
+        'border-radius': '13px',
+        cursor: disabled ? 'default' : 'pointer',
+        color: disabled ? t.disabled : t.text,
+      }}
+    >
+      <Icon name={icon} style={{ 'font-size': '0.9rem' }} />
+    </Box>
+  );
+};
+
+const Avatar = (props) => {
+  const { site, size, t } = props;
+  if (site.icon) {
+    return (
+      <img
+        src={site.icon}
+        alt=""
+        width={size}
+        height={size}
+        style={{ 'border-radius': '50%', 'object-fit': 'cover' }}
+      />
+    );
+  }
+  return (
+    <Box
+      style={{
+        display: 'flex',
+        'align-items': 'center',
+        'justify-content': 'center',
+        'flex-shrink': '0',
+        width: size,
+        height: size,
+        'border-radius': '50%',
+        background: t.accent,
+        color: t.deep,
+        'font-size': '1.3rem',
+        'font-weight': 'bold',
+      }}
+    >
+      {site.domain.slice(0, 1).toUpperCase()}
+    </Box>
+  );
+};
+
+const Pill = (props) => {
+  const { icon, text, t, onClick } = props;
+  return (
+    <Box
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        'align-items': 'center',
+        gap: '8px',
+        padding: '8px 16px',
+        'border-radius': '18px',
+        background: t.surface,
+        border: '1px solid ' + t.line,
+        color: t.text,
+        cursor: 'pointer',
+      }}
+    >
+      <Icon name={icon} style={{ color: t.muted }} />
+      {text}
+    </Box>
+  );
+};
+
+const TabStrip = (props, context) => {
+  const { act, data } = useBackend<Data>(context);
+  const { tabs, can_open_tab } = data;
+  const t = palette(data);
+  return (
+    <Box
+      style={{
+        display: 'flex',
+        'align-items': 'flex-end',
+        gap: '2px',
+        padding: '6px 8px 0',
+        background: t.deep,
+      }}
+    >
+      {tabs.map((tab) => (
+        <Box
+          key={tab.id}
+          onClick={() => act('tab_select', { id: tab.id })}
+          style={{
+            display: 'flex',
+            'align-items': 'center',
+            gap: '8px',
+            'max-width': '200px',
+            padding: '6px 12px',
+            'border-radius': '8px 8px 0 0',
+            background: tab.active ? t.chrome : 'transparent',
+            color: tab.active ? t.text : t.muted,
+            cursor: 'pointer',
+          }}
+        >
+          <Icon
+            name="globe"
+            style={{ color: tab.active ? t.accent : t.muted, 'font-size': '0.8rem' }}
+          />
+          <Box
+            style={{
+              overflow: 'hidden',
+              'text-overflow': 'ellipsis',
+              'white-space': 'nowrap',
+              'font-size': '0.85rem',
+            }}
+          >
+            {tab.title}
+          </Box>
+          {tabs.length > 1 && (
+            <Box
+              onClick={() => act('tab_close', { id: tab.id })}
+              style={{ color: t.muted, 'font-size': '0.7rem' }}
+            >
+              <Icon name="times" />
+            </Box>
+          )}
+        </Box>
+      ))}
+      {can_open_tab && (
+        <Box
+          onClick={() => act('tab_open')}
+          style={{
+            padding: '4px 10px 6px',
+            cursor: 'pointer',
+            color: t.muted,
+            'font-size': '1.1rem',
+          }}
+        >
+          <Icon name="plus" />
+        </Box>
+      )}
+    </Box>
+  );
+};
+
+const Toolbar = (props, context) => {
+  const { act, data } = useBackend<Data>(context);
+  const { address, has_back, has_forward, site, theme } = data;
+  const t = palette(data);
+  return (
+    <Box
+      style={{
+        display: 'flex',
+        'align-items': 'center',
+        gap: '5px',
+        padding: '6px 8px',
+        background: t.chrome,
+      }}
+    >
+      <ToolButton
+        icon="arrow-left"
+        t={t}
+        disabled={!has_back}
+        onClick={() => act('back')}
+      />
+      <ToolButton
+        icon="arrow-right"
+        t={t}
+        disabled={!has_forward}
+        onClick={() => act('forward')}
+      />
+      <ToolButton icon="sync" t={t} onClick={() => act('refresh')} />
+      <ToolButton icon="home" t={t} onClick={() => act('home')} />
+      <Box
+        style={{
+          display: 'flex',
+          'align-items': 'center',
+          gap: '8px',
+          flex: '1',
+          'min-width': '0',
+          height: '28px',
+          padding: '0 12px',
+          background: t.deep,
+          border: '1px solid ' + t.line,
+          'border-radius': '14px',
+        }}
+      >
+        <Icon
+          name={site ? 'lock' : 'globe'}
+          style={{
+            color: site ? t.secure : t.muted,
+            'font-size': '0.8rem',
+          }}
+        />
+        <Field
+          value={address}
+          height="26px"
+          fontSize="1rem"
+          color={t.text}
+          placeholder="Введите адрес .f13 или поисковый запрос"
+          onEnter={(value) => act('go', { query: value })}
+        />
+      </Box>
+      <ToolButton
+        icon="list"
+        t={t}
+        onClick={() => act('view', { name: 'catalog' })}
+      />
+      <ToolButton
+        icon="plus-square"
+        t={t}
+        onClick={() => act('view', { name: 'create' })}
+      />
+      <ToolButton
+        icon={theme === 'light' ? 'moon-o' : 'sun-o'}
+        t={t}
+        onClick={() => act('theme')}
+      />
+    </Box>
+  );
+};
+
+const HomePage = (props, context) => {
+  const { act, data } = useBackend<Data>(context);
+  const { catalog } = data;
+  const t = palette(data);
+  return (
+    <Box
+      style={{
+        display: 'flex',
+        'flex-direction': 'column',
+        'align-items': 'center',
+        padding: '60px 24px 32px',
+      }}
+    >
+      <Box
+        style={{
+          'font-size': '3.4rem',
+          'font-weight': 'bold',
+          'line-height': '1',
+        }}
+      >
+        SCP
+        <Box as="span" style={{ color: t.accent }}>
+          net
+        </Box>
+      </Box>
+      <Box mt={0.5} style={{ color: t.muted, 'letter-spacing': '2px' }}>
+        СЕТЬ СТАНЦИОННЫХ САЙТОВ
+      </Box>
+      <Box
+        style={{
+          display: 'flex',
+          'align-items': 'center',
+          gap: '10px',
+          width: '100%',
+          'max-width': '520px',
+          height: '42px',
+          margin: '28px 0 0',
+          padding: '0 18px',
+          background: t.surface,
+          border: '1px solid ' + t.line,
+          'border-radius': '21px',
+        }}
+      >
+        <Icon name="search" style={{ color: t.muted }} />
+        <Field
+          value=""
+          height="40px"
+          fontSize="1.1rem"
+          color={t.text}
+          placeholder="Поиск в SCPnet"
+          onEnter={(value) => act('go', { query: value })}
+        />
+      </Box>
+      <Box mt={2} style={{ display: 'flex', gap: '10px' }}>
+        <Pill
+          icon="list"
+          text="Список сайтов"
+          t={t}
+          onClick={() => act('view', { name: 'catalog' })}
+        />
+        <Pill
+          icon="plus"
+          text="Создать сайт"
+          t={t}
+          onClick={() => act('view', { name: 'create' })}
+        />
+      </Box>
+      {catalog.length ? (
+        <Box
+          style={{
+            display: 'flex',
+            'flex-wrap': 'wrap',
+            'justify-content': 'center',
+            gap: '12px',
+            'max-width': '640px',
+            'margin-top': '32px',
+          }}
+        >
+          {catalog.slice(0, 8).map((site) => (
+            <Box
+              key={site.id}
+              onClick={() =>
+                act('open', { site_id: site.id, slug: site.pages[0].slug })
+              }
+              style={{
+                display: 'flex',
+                'flex-direction': 'column',
+                'align-items': 'center',
+                gap: '8px',
+                width: '96px',
+                padding: '10px 4px',
+                'border-radius': '10px',
+                cursor: 'pointer',
+                background: t.surface,
+              }}
+            >
+              <Avatar site={site} size="40px" t={t} />
+              <Box
+                style={{
+                  width: '100%',
+                  overflow: 'hidden',
+                  'text-overflow': 'ellipsis',
+                  'white-space': 'nowrap',
+                  'text-align': 'center',
+                  'font-size': '0.75rem',
+                  color: t.muted,
+                }}
+              >
+                {site.domain}
+              </Box>
+            </Box>
+          ))}
+        </Box>
+      ) : null}
+    </Box>
+  );
+};
+
+const CatalogPage = (props, context) => {
+  const { act, data } = useBackend<Data>(context);
+  const { catalog } = data;
+  const t = palette(data);
+  return (
+    <Box style={{ padding: '24px' }}>
+      <Box mb={2} style={{ 'font-size': '1.4rem', 'font-weight': 'bold' }}>
+        Список сайтов
+      </Box>
+      {(catalog.length &&
+        catalog.map((site) => (
+          <Box
+            key={site.id}
+            style={{
+              display: 'flex',
+              'align-items': 'center',
+              gap: '14px',
+              padding: '12px 14px',
+              'margin-bottom': '8px',
+              'border-radius': '10px',
+              background: t.surface,
+            }}
+          >
+            <Avatar site={site} size="36px" t={t} />
+            <Box style={{ flex: '1', 'min-width': '0' }}>
+              <Box style={{ 'font-weight': 'bold' }}>{site.title}</Box>
+              <Box style={{ color: t.muted, 'font-size': '0.85rem' }}>
+                {site.domain}
+              </Box>
+            </Box>
+            {site.pages.map((page) => (
+              <Box
+                key={page.slug}
+                onClick={() =>
+                  act('open', { site_id: site.id, slug: page.slug })
+                }
+                style={{
+                  padding: '6px 12px',
+                  'border-radius': '14px',
+                  background: t.chrome,
+                  color: t.accent,
+                  cursor: 'pointer',
+                  'font-size': '0.85rem',
+                }}
+              >
+                {page.title}
+              </Box>
+            ))}
+          </Box>
+        ))) || <Box style={{ color: t.muted }}>Каталог пуст.</Box>}
+    </Box>
+  );
+};
+
+const CreatePage = (props, context) => {
+  const { act, data } = useBackend<Data>(context);
+  const { login } = data;
+  const t = palette(data);
+  return (
+    <Box
+      style={{
+        display: 'flex',
+        'flex-direction': 'column',
+        'align-items': 'center',
+        padding: '60px 24px',
+      }}
+    >
+      <Box style={{ 'font-size': '1.6rem', 'font-weight': 'bold' }}>
+        Создать сайт
+      </Box>
+      <Box
+        mt={1}
+        style={{
+          color: t.muted,
+          'max-width': '440px',
+          'text-align': 'center',
+        }}
+      >
+        Сайты собираются во внешнем редакторе. Возьмите одноразовый код,
+        откройте редактор на любом устройстве и введите его.
+      </Box>
+      {(login.code && (
+        <Box
+          mt={3}
+          style={{
+            padding: '18px 28px',
+            'border-radius': '12px',
+            background: t.surface,
+            border: '1px solid ' + t.line,
+            'text-align': 'center',
+          }}
+        >
+          <Box
+            style={{
+              'font-size': '2rem',
+              'font-weight': 'bold',
+              'letter-spacing': '2px',
+            }}
+          >
+            {login.code}
+          </Box>
+          <Box mt={1} style={{ color: t.muted }}>
+            Действует 15 минут. Никому не передавайте.
+          </Box>
+        </Box>
+      )) || (
+        <Box mt={3}>
+          <Pill
+            icon="key"
+            t={t}
+            text={login.pending ? 'Запрос…' : 'Получить код'}
+            onClick={() =>
+              !login.pending && !login.retry_seconds && act('login')
+            }
+          />
+        </Box>
+      )}
+      {login.retry_seconds > 0 && (
+        <Box mt={1} style={{ color: t.muted }}>
+          Следующая попытка через {login.retry_seconds} с
+        </Box>
+      )}
+      {login.error && (
+        <Box mt={1} style={{ color: t.danger }}>
+          {login.error}
+        </Box>
+      )}
+    </Box>
+  );
+};
+
+const SearchPage = (props, context) => {
+  const { act, data } = useBackend<Data>(context);
+  const { search } = data;
+  const t = palette(data);
+  return (
+    <Box style={{ padding: '24px' }}>
+      <Box mb={2} style={{ color: t.muted }}>
+        Результаты по запросу «{search.query}»
+      </Box>
+      {(search.results.length &&
+        search.results.map((entry) => (
+          <Box
+            key={entry.site_id + '/' + entry.slug}
+            onClick={() =>
+              act('open', { site_id: entry.site_id, slug: entry.slug })
+            }
+            style={{
+              padding: '12px 14px',
+              'margin-bottom': '8px',
+              'border-radius': '10px',
+              background: t.surface,
+              cursor: 'pointer',
+            }}
+          >
+            <Box style={{ color: t.accent, 'font-weight': 'bold' }}>
+              {entry.title}
+            </Box>
+            <Box style={{ color: t.muted, 'font-size': '0.85rem' }}>
+              {entry.snippet}
+            </Box>
+          </Box>
+        ))) || <Box style={{ color: t.muted }}>Ничего не нашлось.</Box>}
+    </Box>
+  );
+};
+
+const PageText = (props) => {
+  const { text, t } = props;
+  if (!text) {
+    return (
+      <Box style={{ padding: '24px', color: t.muted }}>Страница пуста.</Box>
+    );
+  }
+  return (
+    <Box style={{ padding: '24px', 'white-space': 'pre-wrap' }}>{text}</Box>
+  );
+};
+
 type FrameProps = {
   url: string;
   title: string;
+  t: Palette;
   fallback: any;
 };
 
@@ -196,250 +845,119 @@ class PageFrame extends Component<FrameProps, FrameState> {
   }
 
   render() {
-    const { url, title, fallback } = this.props;
+    const { url, title, t, fallback } = this.props;
     const { allowed, stopped } = this.state as FrameState;
     if (allowed === null) {
-      return <Box color="label">Проверка режима страниц…</Box>;
+      return <Box style={{ padding: '24px', color: t.muted }}>Загрузка…</Box>;
     }
     if (allowed === false || stopped) {
       return (
-        <Stack vertical fill>
-          <Stack.Item>
-            <NoticeBox>
-              {stopped
-                ? 'Страница подвесила клиент и была остановлена.'
-                : 'Этот клиент не умеет показывать страницы целиком.'}
-            </NoticeBox>
-          </Stack.Item>
-          <Stack.Item grow>{fallback}</Stack.Item>
-        </Stack>
+        <Box>
+          <Box style={{ padding: '12px 24px 0', color: t.muted }}>
+            {stopped
+              ? 'Страница подвесила клиент и была остановлена.'
+              : 'Этот клиент не умеет показывать страницы целиком.'}
+          </Box>
+          {fallback}
+        </Box>
       );
     }
     return (
-      <Stack vertical fill>
-        <Stack.Item>
-          <Button icon="stop" onClick={() => this.setState({ stopped: true })}>
-            Остановить страницу
-          </Button>
-        </Stack.Item>
-        <Stack.Item grow>
-          <iframe
-            key={url}
-            title={title}
-            ref={(node: any) => {
-              if (!node || node.dataset.scpnetLoaded === url) {
-                return;
-              }
-              node.dataset.scpnetLoaded = url;
-              node.setAttribute('sandbox', FRAME_SANDBOX);
-              node.setAttribute('csp', FRAME_POLICY);
-              node.setAttribute('referrerpolicy', 'no-referrer');
-              node.setAttribute('allow', '');
-              node.setAttribute('src', url);
-            }}
-            style={{
-              width: '100%',
-              height: '100%',
-              border: 'none',
-              background: '#ffffff',
-            }}
-          />
-        </Stack.Item>
-      </Stack>
+      <iframe
+        title={title}
+        ref={(node: any) => {
+          if (!node || node.dataset.scpnetLoaded === url) {
+            return;
+          }
+          node.dataset.scpnetLoaded = url;
+          node.setAttribute('sandbox', FRAME_SANDBOX);
+          node.setAttribute('csp', FRAME_POLICY);
+          node.setAttribute('referrerpolicy', 'no-referrer');
+          node.setAttribute('allow', '');
+          node.setAttribute('src', url);
+        }}
+        style={{
+          width: '100%',
+          height: '100%',
+          border: 'none',
+          background: '#ffffff',
+        }}
+      />
     );
   }
 }
 
-const PageText = (props) => {
-  const { text } = props;
-  if (!text) {
-    return <Box color="label">Страница пуста.</Box>;
-  }
-  return <Box preserveWhitespace>{text}</Box>;
-};
-
-const LoginPanel = (props, context) => {
-  const { act, data } = useBackend<Data>(context);
-  const { login } = data;
-  return (
-    <Section title="Свои сайты">
-      {(login.code && (
-        <Box>
-          <Box bold fontSize="1.4rem">
-            {login.code}
-          </Box>
-          <Box color="label">
-            Введите код в редакторе. Никому его не передавайте.
-          </Box>
-        </Box>
-      )) || (
-        <Stack align="center">
-          <Stack.Item>
-            <Button
-              icon="key"
-              disabled={login.pending || login.retry_seconds > 0}
-              onClick={() => act('login')}
-            >
-              {login.pending ? 'Запрос…' : 'Получить код для редактора'}
-            </Button>
-          </Stack.Item>
-          {login.retry_seconds > 0 && (
-            <Stack.Item color="label">
-              Ещё раз через {login.retry_seconds} с
-            </Stack.Item>
-          )}
-        </Stack>
-      )}
-      {login.error && <Box color="bad">{login.error}</Box>}
-    </Section>
-  );
-};
-
-const SearchResults = (props, context) => {
-  const { act, data } = useBackend<Data>(context);
-  const { search } = data;
-  return (
-    <Section title={'Найдено по запросу «' + search.query + '»'}>
-      {(search.results.length &&
-        search.results.map((entry) => (
-          <Box key={entry.site_id + '/' + entry.slug} mb={1}>
-            <Button
-              fluid
-              onClick={() =>
-                act('open', { site_id: entry.site_id, slug: entry.slug })
-              }
-            >
-              {entry.title}
-            </Button>
-            <Box color="label">{entry.snippet}</Box>
-          </Box>
-        ))) || <Box color="label">Ничего не нашлось.</Box>}
-    </Section>
-  );
-};
-
-const SiteList = (props, context) => {
-  const { act, data } = useBackend<Data>(context);
-  const { catalog } = data;
-  if (!catalog.length) {
-    return (
-      <Section title="Сайты">
-        <Box color="label">Каталог пуст.</Box>
-      </Section>
-    );
-  }
-  return (
-    <Section title="Сайты">
-      {catalog.map((site) => (
-        <Section key={site.id} title={site.title}>
-          <Box color="label" mb={1}>
-            {site.domain}
-          </Box>
-          {site.pages.map((page) => (
-            <Button
-              key={page.slug}
-              mr={1}
-              onClick={() => act('open', { site_id: site.id, slug: page.slug })}
-            >
-              {page.title}
-            </Button>
-          ))}
-        </Section>
-      ))}
-    </Section>
-  );
-};
-
 export const NtosSCPnet = (props, context) => {
-  const { act, data } = useBackend<Data>(context);
-  const { available, loading, site, page, slug, search } = data;
-  const [query, setQuery] = useLocalState(context, 'scpnet_query', '');
-  const address = site ? site.domain + (slug === 'index' ? '' : '/' + slug) : '';
+  const { data } = useBackend<Data>(context);
+  const { available, loading, site, page, view, search } = data;
+  const t = palette(data);
   const frame = page && FRAME_ADDRESS.test(page.frame || '') ? page.frame : null;
+  const title = (page && page.title) || (site && site.title) || 'SCPnet';
   return (
     <NtosWindow width={900} height={700} resizable>
       <NtosWindow.Content>
-        <Stack vertical fill>
-          <Stack.Item>
-            <Section>
-              <Stack align="center">
-                <Stack.Item>
-                  <Button
-                    icon="home"
-                    disabled={!site && !search.query}
-                    onClick={() => act('home')}
-                  />
-                </Stack.Item>
-                <Stack.Item>
-                  <Button icon="sync" onClick={() => act('refresh')} />
-                </Stack.Item>
-                <Stack.Item grow>
-                  {(site && <Box>{address}</Box>) || (
-                    <Input
-                      fluid
-                      value={query}
-                      placeholder="Поиск по SCPnet"
-                      onInput={(event, value) => setQuery(value)}
-                      onEnter={(event, value) => act('search', { query: value })}
-                    />
-                  )}
-                </Stack.Item>
-                {!site && (
-                  <Stack.Item>
-                    <Button
-                      icon="search"
-                      disabled={search.pending}
-                      onClick={() => act('search', { query: query })}
-                    >
-                      Найти
-                    </Button>
-                  </Stack.Item>
-                )}
-              </Stack>
-            </Section>
-          </Stack.Item>
+        <Box
+          style={{
+            display: 'flex',
+            'flex-direction': 'column',
+            height: '100%',
+            background: t.canvas,
+            color: t.text,
+          }}
+        >
+          <TabStrip />
+          <Toolbar />
           {!available && (
-            <Stack.Item>
-              <NoticeBox>SCPnet недоступен. Показано сохранённое.</NoticeBox>
-            </Stack.Item>
+            <Box
+              style={{
+                padding: '8px 24px',
+                background: t.notice,
+                color: t.noticeText,
+                'font-size': '0.85rem',
+              }}
+            >
+              SCPnet недоступен. Показано сохранённое.
+            </Box>
           )}
-          {search.error && !site && (
-            <Stack.Item>
-              <NoticeBox>{search.error}</NoticeBox>
-            </Stack.Item>
+          {search.error && (
+            <Box
+              style={{
+                padding: '8px 24px',
+                background: t.notice,
+                color: t.danger,
+                'font-size': '0.85rem',
+              }}
+            >
+              {search.error}
+            </Box>
           )}
-          <Stack.Item grow>
+          <Box style={{ flex: '1', 'min-height': '0', overflow: 'auto' }}>
             {(loading && (
-              <Section fill>
-                <Box color="label">
-                  <Icon name="spinner" spin mr={1} />
-                  Загрузка…
-                </Box>
-              </Section>
+              <Box style={{ padding: '24px', color: t.muted }}>
+                <Icon name="spinner" spin mr={1} />
+                Загрузка…
+              </Box>
             )) ||
-              (site && (
-                <Section fill scrollable={!frame} title={page && page.title}>
-                  {(page &&
-                    ((frame && (
-                      <PageFrame
-                        key={frame}
-                        url={frame}
-                        title={page.title}
-                        fallback={<PageText text={page.text} />}
-                      />
-                    )) || <PageText text={page.text} />)) || (
-                    <Box color="label">Страница не открылась.</Box>
-                  )}
-                </Section>
-              )) ||
-              (search.query && <SearchResults />) || <SiteList />}
-          </Stack.Item>
-          {!site && (
-            <Stack.Item>
-              <LoginPanel />
-            </Stack.Item>
-          )}
-        </Stack>
+              (site &&
+                ((page &&
+                  ((frame && (
+                    <PageFrame
+                      key={frame}
+                      url={frame}
+                      title={title}
+                      t={t}
+                      fallback={<PageText text={page.text} t={t} />}
+                    />
+                  )) || <PageText text={page.text} t={t} />)) || (
+                  <Box style={{ padding: '24px', color: t.muted }}>
+                    Страница не открылась.
+                  </Box>
+                ))) ||
+              (search.query && <SearchPage />) ||
+              (view === 'catalog' && <CatalogPage />) ||
+              (view === 'create' && <CreatePage />) || <HomePage />}
+          </Box>
+        </Box>
       </NtosWindow.Content>
     </NtosWindow>
   );
