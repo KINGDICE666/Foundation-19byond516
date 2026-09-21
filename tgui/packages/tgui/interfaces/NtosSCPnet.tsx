@@ -54,6 +54,8 @@ const PALETTES: Record<string, Palette> = {
 
 const FRAME_ADDRESS =
   /^https:\/\/[a-z0-9.-]{4,64}\/i\/[a-f0-9]{32}\/[a-z0-9][a-z0-9-]{0,62}$/;
+const FRAME_SITE = /^[a-f0-9]{32}$/;
+const FRAME_SLUG = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const FRAME_SANDBOX = 'allow-scripts';
 const FRAME_POLICY = [
   "default-src 'none'",
@@ -139,6 +141,23 @@ const rendererAllows = (): Promise<boolean> => {
     })().catch(() => false);
   }
   return rendererCheck;
+};
+
+const navigationRequest = (value: any) => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const { ntnet, site, slug } = value;
+  if (
+    ntnet !== 'navigate' ||
+    typeof site !== 'string' ||
+    typeof slug !== 'string' ||
+    !FRAME_SITE.test(site) ||
+    !FRAME_SLUG.test(slug)
+  ) {
+    return null;
+  }
+  return { siteId: site, slug };
 };
 
 type SitePage = {
@@ -796,6 +815,7 @@ type FrameProps = {
   title: string;
   t: Palette;
   fallback: any;
+  onNavigate: (siteId: string, slug: string) => void;
 };
 
 type FrameState = {
@@ -807,6 +827,17 @@ class PageFrame extends Component<FrameProps, FrameState> {
   private alive = true;
   private timer = 0;
   private lastTick = 0;
+  private frame: any = null;
+
+  private receive = (event: MessageEvent) => {
+    if (!this.frame || event.source !== this.frame.contentWindow) {
+      return;
+    }
+    const request = navigationRequest(event.data);
+    if (request) {
+      this.props.onNavigate(request.siteId, request.slug);
+    }
+  };
 
   constructor(props: FrameProps) {
     super(props);
@@ -814,6 +845,7 @@ class PageFrame extends Component<FrameProps, FrameState> {
   }
 
   componentDidMount() {
+    window.addEventListener('message', this.receive);
     rendererAllows().then((result) => {
       if (this.alive) {
         this.setState({ allowed: result });
@@ -824,6 +856,7 @@ class PageFrame extends Component<FrameProps, FrameState> {
 
   componentWillUnmount() {
     this.alive = false;
+    window.removeEventListener('message', this.receive);
     window.clearInterval(this.timer);
   }
 
@@ -866,6 +899,7 @@ class PageFrame extends Component<FrameProps, FrameState> {
       <iframe
         title={title}
         ref={(node: any) => {
+          this.frame = node;
           if (!node || node.dataset.scpnetLoaded === url) {
             return;
           }
@@ -888,7 +922,7 @@ class PageFrame extends Component<FrameProps, FrameState> {
 }
 
 export const NtosSCPnet = (props, context) => {
-  const { data } = useBackend<Data>(context);
+  const { act, data } = useBackend<Data>(context);
   const { available, loading, site, page, view, search } = data;
   const t = palette(data);
   const frame = page && FRAME_ADDRESS.test(page.frame || '') ? page.frame : null;
@@ -947,6 +981,9 @@ export const NtosSCPnet = (props, context) => {
                       title={title}
                       t={t}
                       fallback={<PageText text={page.text} t={t} />}
+                      onNavigate={(siteId, slug) =>
+                        act('open', { site_id: siteId, slug })
+                      }
                     />
                   )) || <PageText text={page.text} t={t} />)) || (
                   <Box style={{ padding: '24px', color: t.muted }}>
