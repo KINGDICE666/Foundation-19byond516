@@ -780,6 +780,14 @@ const SearchPage = (props, context) => {
   const { act, data } = useBackend<Data>(context);
   const { search } = data;
   const t = palette(data);
+  if (search.pending) {
+    return (
+      <Box style={{ padding: '40px', 'text-align': 'center', color: t.muted }}>
+        <Icon name="spinner" spin mr={1} />
+        Ищем «{search.query}» в SCPnet…
+      </Box>
+    );
+  }
   return (
     <Box style={{ padding: '24px' }}>
       <Box mb={2} style={{ color: t.muted }}>
